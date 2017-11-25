@@ -197,7 +197,8 @@ def create_model(inputs, targets):
 
     # loss
     alpha = 0.002/(256*256)
-    loss = tf.reduce_mean(tf.square(targets - outputs)) + alpha * total_variation(tf.nn.tanh(inputs / speckle_image))
+    # loss = tf.reduce_mean(tf.square(targets - outputs)) + alpha * tf.image.total_variation(tf.nn.tanh(inputs / speckle_image))
+    loss = tf.reduce_mean(tf.square(targets - outputs))
 
     optim = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5) # 优化器
     grads_and_vars = optim.compute_gradients(loss) # 变量和梯度记录
