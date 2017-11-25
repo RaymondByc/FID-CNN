@@ -9,17 +9,17 @@ import random
 
 # 返回的CLASS的格式
 Examples = collections.namedtuple("Examples", "paths, inputs, targets, count, steps_per_epoch")
-Model = collections.namedtuple("Model", "grads_and_vars, loss, train, outputs, step_update")
+Model = collections.namedtuple("Model", "grads_and_vars, loss, train, outputs")
 
 
-BATCH_SIZE = 16
+BATCH_SIZE = 1
 EPS = 1e-12
 SUMMARY_FREQ = 100
 TRACE_FREQ = 0
 OUTDIR = 'out'
 CHECKPOINT = ''
 MAX_STEPS = None
-MAX_EPOCH = 200 # number of training epochs
+MAX_EPOCH = 100 # number of training epochs
 PROCESS_FREQ = 50 # display progress every progress_freq steps
 DISPLAY_FREQ = 0  # write current training images every display_freq steps
 SAVE_FREQ = 5000
@@ -39,6 +39,7 @@ def deprocess(image):
     with tf.name_scope("deprocess"):
         # [-1, 1] => [0, 1]
         return (image + 1) / 2
+
 def load_examples():
     if INPUTDIR is None or not os.path.exists(INPUTDIR):
         raise Exception("input_dir does not exist")
@@ -121,6 +122,8 @@ def load_examples():
         count=len(input_paths),
         steps_per_epoch=steps_per_epoch,
     )
+
+
 def conv(batch_input, out_channels, stride):
     with tf.variable_scope("conv"):
         in_channels = batch_input.get_shape()[3]
@@ -165,7 +168,7 @@ def create_model(inputs, targets):
     # e2 - e4
     for e_i in range(2,5):
         with tf.variable_scope("encode_%d" % e_i):
-            e_rected = tf.nn.leaky_relu(layers[-1])
+            e_rected = tf.nn.leaky_relu(layers[-1], alpha=0.2)
             e_conved = conv(e_rected,64,1)
             e_normed = batchnorm(e_conved)
             layers.append(e_normed)
@@ -195,26 +198,31 @@ def create_model(inputs, targets):
     o1_rect = tf.nn.relu(o1_input)
     speckle_image = o1_rect + EPS
 
+    outputs = tf.nn.tanh(inputs / speckle_image)
+
     # loss
-    alpha = 0.002/(256*256)
-    # loss = tf.reduce_mean(tf.square(targets - outputs)) + alpha * tf.image.total_variation(tf.nn.tanh(inputs / speckle_image))
+    lambda_tv = 0.003 / (256 * 256)
+    # loss = tf.reduce_mean(tf.square(targets - outputs)) + lambda_tv * tf.image.total_variation(outputs)
     loss = tf.reduce_mean(tf.square(targets - outputs))
 
     optim = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5) # 优化器
     grads_and_vars = optim.compute_gradients(loss) # 变量和梯度记录
     train = optim.apply_gradients(grads_and_vars) # trian
 
+    ema = tf.train.ExponentialMovingAverage(decay=0.99)
+    loss_update = ema.apply([loss])
+
     global_step = tf.train.get_or_create_global_step()
     step_update = tf.assign(global_step, global_step+1)
 
     return Model(outputs=outputs,
                  grads_and_vars=grads_and_vars,
-                 train=tf.group(train, step_update),
-                 step_update=step_update,
-                 loss=loss
+                 train=tf.group(train, step_update,loss_update),
+                 loss=ema.average(loss)
                  )
+def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 def save_images(fetches, step=None):
-    image_dir = os.path.join(a.output_dir, "images")
+    image_dir = os.path.join(OUTDIR, "images")
     if not os.path.exists(image_dir):
         os.makedirs(image_dir)
 
@@ -257,14 +265,13 @@ def append_index(filesets, step=False):
 
         index.write("</tr>")
     return index_path
-def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
-# 载入图片
+# load image data
 examples = load_examples()
+
 # model return grads_and_vars, loss, train, outputs, step_update
 model = create_model(examples.inputs, examples.targets)
-
-# deprocess 都不知道干啥子。
+# deprocess ???
 inputs = deprocess(examples.inputs)
 targets = deprocess(examples.targets)
 outputs = deprocess(model.outputs)
@@ -301,6 +308,8 @@ for var in tf.trainable_variables():
 
 for grad, var in model.grads_and_vars:
     tf.summary.histogram(var.op.name + "/gradients", grad)
+
+# tf.summary.scalar("loss", model.loss)
 
 with tf.name_scope("parameter_count"):
 
@@ -339,7 +348,8 @@ with sv.managed_session() as sess:
 
         fetch = {
             "train": model.train,
-            "global_step": sv.global_step
+            "global_step": sv.global_step,
+            "loss": model.loss
         }
 
         if should(SUMMARY_FREQ):
@@ -368,7 +378,7 @@ with sv.managed_session() as sess:
             train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
             train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
             rate = (step + 1) * BATCH_SIZE / (time.time() - start)
-            remaining = (MAX_STEPS - step) * BATCH_SIZE / rate
+            remaining = (max_step - step) * BATCH_SIZE / rate
             print(
                 "progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
             print("loss", results["loss"])
