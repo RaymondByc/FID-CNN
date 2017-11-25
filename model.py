@@ -39,49 +39,6 @@ def deprocess(image):
     with tf.name_scope("deprocess"):
         # [-1, 1] => [0, 1]
         return (image + 1) / 2
-# def load_examples():
-#     input_paths = glob.glob(os.path.join("data", "*.png"))
-#     print(input_paths)
-#     with tf.name_scope("load_images"):
-#
-#         path_queue = tf.train.string_input_producer(input_paths)
-#
-#         reader = tf.WholeFileReader()
-#         paths, contents = reader.read(path_queue)
-#
-#         with tf.name_scope("raw_input"):
-#             raw_input = tf.image.decode_png(contents, channels=3)
-#             # print(1,(raw_input))
-#             raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32)
-#             # print(2,raw_input)
-#
-#         assertion = tf.assert_equal(tf.shape(raw_input)[2], 3, message="image does not have 3 channels")
-#         with tf.control_dependencies([assertion]):
-#             raw_input = tf.identity(raw_input)  # 新的raw_input
-#
-#         raw_input.set_shape([256, 512, 3])
-#
-#         width = tf.shape(raw_input)[1]
-#
-#         input_images = preprocess(raw_input[:, :width//2, :])
-#         target_images = preprocess(raw_input[:,width//2:,:])
-#
-#         input_images.set_shape([256, 256, 3])
-#         target_images.set_shape([256, 256, 3])
-#
-#     # print(3,input_images)
-#
-#
-#     paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images],batch_size=BATCH_SIZE)
-#     steps_per_epoch = int(math.ceil(len(input_paths) / BATCH_SIZE))
-#
-#     return Examples(
-#         paths=paths_batch,
-#         inputs=inputs_batch,
-#         targets=targets_batch,
-#         count=len(input_paths),
-#         steps_per_epoch=steps_per_epoch
-#     )
 def load_examples():
     if INPUTDIR is None or not os.path.exists(INPUTDIR):
         raise Exception("input_dir does not exist")
@@ -164,8 +121,6 @@ def load_examples():
         count=len(input_paths),
         steps_per_epoch=steps_per_epoch,
     )
-examples = load_examples()
-
 def conv(batch_input, out_channels, stride):
     with tf.variable_scope("conv"):
         in_channels = batch_input.get_shape()[3]
@@ -183,73 +138,6 @@ def deconv(batch_input, out_channels):
         #     => [batch, out_height, out_width, out_channels]
         conv = tf.nn.conv2d_transpose(batch_input, filter, [batch, in_height, in_width, out_channels], [1,1, 1, 1], padding="SAME")
         return conv
-def total_variation(images, name=None):
-  """Calculate and return the total variation for one or more images.
-
-  The total variation is the sum of the absolute differences for neighboring
-  pixel-values in the input images. This measures how much noise is in the
-  images.
-
-  This can be used as a loss-function during optimization so as to suppress
-  noise in images. If you have a batch of images, then you should calculate
-  the scalar loss-value as the sum:
-  `loss = tf.reduce_sum(tf.image.total_variation(images))`
-
-  This implements the anisotropic 2-D version of the formula described here:
-
-  https://en.wikipedia.org/wiki/Total_variation_denoising
-
-  Args:
-    images: 4-D Tensor of shape `[batch, height, width, channels]` or
-            3-D Tensor of shape `[height, width, channels]`.
-
-    name: A name for the operation (optional).
-
-  Raises:
-    ValueError: if images.shape is not a 3-D or 4-D vector.
-
-  Returns:
-    The total variation of `images`.
-
-    If `images` was 4-D, return a 1-D float Tensor of shape `[batch]` with the
-    total variation for each image in the batch.
-    If `images` was 3-D, return a scalar float with the total variation for
-    that image.
-  """
-
-  with ops.name_scope(name, 'total_variation'):
-    ndims = images.get_shape().ndims
-
-    if ndims == 3:
-      # The input is a single image with shape [height, width, channels].
-
-      # Calculate the difference of neighboring pixel-values.
-      # The images are shifted one pixel along the height and width by slicing.
-      pixel_dif1 = images[1:, :, :] - images[:-1, :, :]
-      pixel_dif2 = images[:, 1:, :] - images[:, :-1, :]
-
-      # Sum for all axis. (None is an alias for all axis.)
-      sum_axis = None
-    elif ndims == 4:
-      # The input is a batch of images with shape:
-      # [batch, height, width, channels].
-
-      # Calculate the difference of neighboring pixel-values.
-      # The images are shifted one pixel along the height and width by slicing.
-      pixel_dif1 = images[:, 1:, :, :] - images[:, :-1, :, :]
-      pixel_dif2 = images[:, :, 1:, :] - images[:, :, :-1, :]
-
-      # Only sum for the last 3 axis.
-      # This results in a 1-D tensor with the total variation for each image.
-      sum_axis = [1, 2, 3]
-    else:
-      raise ValueError('\'images\' must be either 3 or 4-dimensional.')
-
-    # Calculate the total variation by taking the absolute value of the
-    # pixel-differences and summing over the appropriate axis.
-    tot_var = (math_ops.reduce_sum(math_ops.square(math_ops.pow(pixel_dif1, 2) + math_ops.pow(pixel_dif2, 2)), axis=sum_axis))
-
-    return tot_var
 def batchnorm(input):
     with tf.variable_scope("batchnorm"):
         # this block looks like it has 3 inputs on the graph unless we do this
@@ -324,7 +212,6 @@ def create_model(inputs, targets):
                  step_update=step_update,
                  loss=loss
                  )
-
 def save_images(fetches, step=None):
     image_dir = os.path.join(a.output_dir, "images")
     if not os.path.exists(image_dir):
@@ -345,7 +232,6 @@ def save_images(fetches, step=None):
                 f.write(contents)
         filesets.append(fileset)
     return filesets
-
 # 添加到网页
 def append_index(filesets, step=False):
     index_path = os.path.join(OUTDIR, "index.html")
@@ -370,7 +256,10 @@ def append_index(filesets, step=False):
 
         index.write("</tr>")
     return index_path
+def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
+# 载入图片
+examples = load_examples()
 # model return grads_and_vars, loss, train, outputs, step_update
 model = create_model(examples.inputs, examples.targets)
 
@@ -378,8 +267,6 @@ model = create_model(examples.inputs, examples.targets)
 inputs = deprocess(examples.inputs)
 targets = deprocess(examples.targets)
 outputs = deprocess(model.outputs)
-
-def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
 with tf.name_scope("convert_inputs"):
     convert_inputs = convert(inputs)
