@@ -17,18 +17,18 @@ EPS = 1e-12
 SUMMARY_FREQ = 100
 TRACE_FREQ = 0
 OUTDIR = 'out'
-CHECKPOINT = ''
+CHECKPOINT = 'out_success'
 MAX_STEPS = None
 MAX_EPOCH = 100 # number of training epochs
 PROCESS_FREQ = 50 # display progress every progress_freq steps
 DISPLAY_FREQ = 0  # write current training images every display_freq steps
 SAVE_FREQ = 5000
-INPUTDIR = 'data'
+INPUTDIR = 'data_test'
 SCALE_SIZE = 286
 FLIP = True
 ASPECT_RATIO = 1.0
 CROP_SIZE = 256
-
+MODE = 'test'
 
 
 def preprocess(image): # ？这个预处理不知道是为什么
@@ -73,11 +73,11 @@ def load_examples():
         raw_input = tf.image.convert_image_dtype(raw_input, dtype=tf.float32) # 转化图片转化为float32类型
 
         # 验证图片必须为三维的
-        assertion = tf.assert_equal(tf.shape(raw_input)[2], 3, message="image does not have 3 channels")
+        assertion = tf.assert_equal(tf.shape(raw_input)[2], 1, message="image does not have 1 channel")
         with tf.control_dependencies([assertion]):
             raw_input = tf.identity(raw_input) # 新的raw_input
 
-        raw_input.set_shape([None, None, 3])
+        raw_input.set_shape([None, None, 1])
 
         # lab 是个类似于 rgb的色彩空间
 
@@ -227,10 +227,10 @@ def save_images(fetches, step=None):
         os.makedirs(image_dir)
 
     filesets = []
-    for i, in_path in enumerate(fetches["paths"]):
+    for i, in_path in enumerate(fetches["paths:"]):
         name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
         fileset = {"name": name, "step": step}
-        for kind in ["inputs", "outputs", "targets"]:
+        for kind in ["inputs:", "outputs:", "targets:"]:
             filename = name + "-" + kind + ".png"
             if step is not None:
                 filename = "%08d-%s" % (step, filename)
@@ -260,7 +260,7 @@ def append_index(filesets, step=False):
             index.write("<td>%d</td>" % fileset["step"])
         index.write("<td>%s</td>" % fileset["name"])
 
-        for kind in ["inputs", "outputs", "targets"]:
+        for kind in ["inputs:", "outputs:", "targets:"]:
             index.write("<td><img src='images/%s'></td>" % fileset[kind])
 
         index.write("</tr>")
@@ -271,6 +271,7 @@ examples = load_examples()
 
 # model return grads_and_vars, loss, train, outputs, step_update
 model = create_model(examples.inputs, examples.targets)
+print("examples count = %d" % examples.count)
 # deprocess ???
 inputs = deprocess(examples.inputs)
 targets = deprocess(examples.targets)
@@ -284,6 +285,8 @@ with tf.name_scope("convert_outputs"):
 
 with tf.name_scope("convert_targets"):
     convert_targets = convert(targets)
+def ret_paths(path):
+    return path
 
 with tf.name_scope("encode_image"):
     display_fetch = {
@@ -309,7 +312,7 @@ for var in tf.trainable_variables():
 for grad, var in model.grads_and_vars:
     tf.summary.histogram(var.op.name + "/gradients", grad)
 
-# tf.summary.scalar("loss", model.loss)
+#!! tf.summary.scalar("loss", model.loss)
 
 with tf.name_scope("parameter_count"):
 
@@ -323,7 +326,8 @@ with sv.managed_session() as sess:
     print("parameter_count = ",sess.run(parameter_count))
 
     if CHECKPOINT is not None:
-        print("loading model.. and you need finish that")
+        checkpoint = tf.train.latest_checkpoint(CHECKPOINT)
+        saver.restore(sess, checkpoint)
 
     max_step = 2**32
     if MAX_EPOCH is not None:
@@ -333,60 +337,71 @@ with sv.managed_session() as sess:
 
     # test mode about max_step
     # train mode
-    start = time.time()
+    if MODE == 'train':
+        start = time.time()
 
-    for step in range(max_step):
-        def should(freq):
-            return freq > 0 and ((step + 1) % freq == 0 or step == max_step - 1)
+        for step in range(max_step):
+            def should(freq):
+                return freq > 0 and ((step + 1) % freq == 0 or step == max_step - 1)
 
-        options = None
-        run_metadata = None
+            options = None
+            run_metadata = None
 
-        if should(TRACE_FREQ):
-            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-            run_metadata = tf.RunMetadata()
+            if should(TRACE_FREQ):
+                options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+                run_metadata = tf.RunMetadata()
 
-        fetch = {
-            "train": model.train,
-            "global_step": sv.global_step,
-            "loss": model.loss
-        }
+            fetch = {
+                "train": model.train,
+                "global_step": sv.global_step,
+                "loss": model.loss
+            }
 
-        if should(SUMMARY_FREQ):
-            fetch["summary"] = sv.summary_op
+            if should(SUMMARY_FREQ):
+                fetch["summary"] = sv.summary_op
 
-        if should(DISPLAY_FREQ):
-            fetch["display"] = display_fetch
+            if should(DISPLAY_FREQ):
+                fetch["display"] = display_fetch
 
-        results = sess.run(fetch, options=options, run_metadata=run_metadata)
+            results = sess.run(fetch, options=options, run_metadata=run_metadata)
 
-        if should(SUMMARY_FREQ):
-            print("recording summary")
-            sv.summary_writer.add_summary(results["summary"], results["global_step"])
+            if should(SUMMARY_FREQ):
+                print("recording summary")
+                sv.summary_writer.add_summary(results["summary"], results["global_step"])
 
-        if should(DISPLAY_FREQ):
-            print("saving display images")
-            filesets = save_images(results["display"], step=results["global_step"])
-            append_index(filesets, step=True)
+            if should(DISPLAY_FREQ):
+                print("saving display images")
+                filesets = save_images(results["display"], step=results["global_step"])
+                append_index(filesets, step=True)
 
-        if should(TRACE_FREQ):
-            print("recording trace")
-            sv.summary_writer.add_run_metadata(run_metadata, "step_%d" % results["global_step"])
+            if should(TRACE_FREQ):
+                print("recording trace")
+                sv.summary_writer.add_run_metadata(run_metadata, "step_%d" % results["global_step"])
 
-        if should(PROCESS_FREQ):
-            # global_step will have the correct step count if we resume from a checkpoint
-            train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
-            train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
-            rate = (step + 1) * BATCH_SIZE / (time.time() - start)
-            remaining = (max_step - step) * BATCH_SIZE / rate
-            print(
-                "progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
-            print("loss", results["loss"])
+            if should(PROCESS_FREQ):
+                # global_step will have the correct step count if we resume from a checkpoint
+                train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
+                train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
+                rate = (step + 1) * BATCH_SIZE / (time.time() - start)
+                remaining = (max_step - step) * BATCH_SIZE / rate
+                print(
+                    "progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
+                print("loss", results["loss"])
 
-            if should(SAVE_FREQ):
-                print("saving model")
-                saver.save(sess, os.path.join(OUTDIR, "model"), global_step=sv.global_step)
+                if should(SAVE_FREQ):
+                    print("saving model")
+                    saver.save(sess, os.path.join(OUTDIR, "model"), global_step=sv.global_step)
 
-            if sv.should_stop():
-                break
+                if sv.should_stop():
+                    break
+    elif MODE == 'test':
+        max_step = min(examples.steps_per_epoch, max_step)
+        for step in range(max_step):
+            results = sess.run(display_fetch)
 
+            filesets = save_images(results)
+            for i, f in enumerate(filesets):
+                print("evaluated image", f["name"])
+            index_path = append_index(filesets)
+
+        print("wrote index at", index_path)
