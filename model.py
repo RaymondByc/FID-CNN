@@ -4,21 +4,22 @@ import glob
 import os
 import math
 import time
+from tensorflow.python import debug as tf_debug
 import random
 
 # 返回的CLASS的格式
 Examples = collections.namedtuple("Examples", "paths, inputs, targets, count, steps_per_epoch")
-Model = collections.namedtuple("Model", "grads_and_vars, loss, train, outputs")
+Model = collections.namedtuple("Model", "grads_and_vars, loss, train, outputs, step_update")
 
 
-BATCH_SIZE = 1
+BATCH_SIZE = 16
 EPS = 1e-12
 SUMMARY_FREQ = 100
 TRACE_FREQ = 0
 OUTDIR = 'out'
 CHECKPOINT = ''
 MAX_STEPS = None
-MAX_EPOCH = 100 # number of training epochs
+MAX_EPOCH = 200 # number of training epochs
 PROCESS_FREQ = 50 # display progress every progress_freq steps
 DISPLAY_FREQ = 0  # write current training images every display_freq steps
 SAVE_FREQ = 5000
@@ -27,7 +28,7 @@ SCALE_SIZE = 286
 FLIP = True
 ASPECT_RATIO = 1.0
 CROP_SIZE = 256
-MODE = 'test'
+
 
 
 def preprocess(image): # ？这个预处理不知道是为什么
@@ -164,7 +165,7 @@ def create_model(inputs, targets):
     # e2 - e4
     for e_i in range(2,5):
         with tf.variable_scope("encode_%d" % e_i):
-            e_rected = tf.nn.leaky_relu(layers[-1], alpha=0.2)
+            e_rected = tf.nn.leaky_relu(layers[-1])
             e_conved = conv(e_rected,64,1)
             e_normed = batchnorm(e_conved)
             layers.append(e_normed)
@@ -194,31 +195,26 @@ def create_model(inputs, targets):
     o1_rect = tf.nn.relu(o1_input)
     speckle_image = o1_rect + EPS
 
-    outputs = tf.nn.tanh(inputs / speckle_image)
-
     # loss
-    lambda_tv = 0.003 / (256 * 256)
-    # loss = tf.reduce_mean(tf.square(targets - outputs)) + lambda_tv * tf.image.total_variation(outputs)
+    alpha = 0.002/(256*256)
+    # loss = tf.reduce_mean(tf.square(targets - outputs)) + alpha * tf.image.total_variation(tf.nn.tanh(inputs / speckle_image))
     loss = tf.reduce_mean(tf.square(targets - outputs))
 
     optim = tf.train.AdamOptimizer(learning_rate=0.0002, beta1=0.5) # 优化器
     grads_and_vars = optim.compute_gradients(loss) # 变量和梯度记录
     train = optim.apply_gradients(grads_and_vars) # trian
 
-    ema = tf.train.ExponentialMovingAverage(decay=0.99)
-    loss_update = ema.apply([loss])
-
     global_step = tf.train.get_or_create_global_step()
     step_update = tf.assign(global_step, global_step+1)
 
     return Model(outputs=outputs,
                  grads_and_vars=grads_and_vars,
-                 train=tf.group(train, step_update,loss_update),
-                 loss=ema.average(loss)
+                 train=tf.group(train, step_update),
+                 step_update=step_update,
+                 loss=loss
                  )
-def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 def save_images(fetches, step=None):
-    image_dir = os.path.join(OUTDIR, "images")
+    image_dir = os.path.join(a.output_dir, "images")
     if not os.path.exists(image_dir):
         os.makedirs(image_dir)
 
@@ -261,23 +257,14 @@ def append_index(filesets, step=False):
 
         index.write("</tr>")
     return index_path
+def convert(image): return  tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
-if MODE == 'test':
-    # options = {"which_direction", "ngf", "ndf", "lab_colorization"}
-    # with open(os.path.join(CHECKPOINT, "options.json")) as f:
-    #     for key, val in json.loads(f.read()).items():
-    #         if key in options:
-    #             print("loaded", key, "=", val)
-                # setattr(a, key, val)
-    # disable these features in test mode
-    SCALE_SIZE = CROP_SIZE
-    FLIP = False
-# load image data
+# 载入图片
 examples = load_examples()
-
 # model return grads_and_vars, loss, train, outputs, step_update
 model = create_model(examples.inputs, examples.targets)
-# deprocess ???
+
+# deprocess 都不知道干啥子。
 inputs = deprocess(examples.inputs)
 targets = deprocess(examples.targets)
 outputs = deprocess(model.outputs)
@@ -291,12 +278,9 @@ with tf.name_scope("convert_outputs"):
 with tf.name_scope("convert_targets"):
     convert_targets = convert(targets)
 
-def ret_paths(path):
-    return path
-
 with tf.name_scope("encode_image"):
     display_fetch = {
-        "paths:" : tf.map_fn(ret_paths, examples.paths, dtype=tf.string, name="paths"),
+        "paths:" : examples.paths,
         "inputs:" : tf.map_fn(tf.image.encode_png, convert_inputs, dtype=tf.string, name="input_pngs"),
         "outputs:": tf.map_fn(tf.image.encode_png, convert_outputs, dtype=tf.string, name="output_pngs"),
         "targets:": tf.map_fn(tf.image.encode_png, convert_targets, dtype=tf.string, name="targets_pngs"),
@@ -318,8 +302,6 @@ for var in tf.trainable_variables():
 for grad, var in model.grads_and_vars:
     tf.summary.histogram(var.op.name + "/gradients", grad)
 
-# tf.summary.scalar("loss", model.loss)
-
 with tf.name_scope("parameter_count"):
 
     parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
@@ -334,7 +316,6 @@ with sv.managed_session() as sess:
     if CHECKPOINT is not None:
         print("loading model.. and you need finish that")
 
-
     max_step = 2**32
     if MAX_EPOCH is not None:
         max_step = examples.steps_per_epoch * MAX_EPOCH
@@ -343,72 +324,59 @@ with sv.managed_session() as sess:
 
     # test mode about max_step
     # train mode
-    if MODE == 'train':
-        start = time.time()
+    start = time.time()
 
-        for step in range(max_step):
-            def should(freq):
-                return freq > 0 and ((step + 1) % freq == 0 or step == max_step - 1)
+    for step in range(max_step):
+        def should(freq):
+            return freq > 0 and ((step + 1) % freq == 0 or step == max_step - 1)
 
-            options = None
-            run_metadata = None
+        options = None
+        run_metadata = None
 
-            if should(TRACE_FREQ):
-                options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-                run_metadata = tf.RunMetadata()
+        if should(TRACE_FREQ):
+            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
 
-            fetch = {
-                "train": model.train,
-                "global_step": sv.global_step,
-                "loss": model.loss
-            }
+        fetch = {
+            "train": model.train,
+            "global_step": sv.global_step
+        }
 
-            if should(SUMMARY_FREQ):
-                fetch["summary"] = sv.summary_op
+        if should(SUMMARY_FREQ):
+            fetch["summary"] = sv.summary_op
 
-            if should(DISPLAY_FREQ):
-                fetch["display"] = display_fetch
+        if should(DISPLAY_FREQ):
+            fetch["display"] = display_fetch
 
+        results = sess.run(fetch, options=options, run_metadata=run_metadata)
 
-            if should(SUMMARY_FREQ):
-                print("recording summary")
-                sv.summary_writer.add_summary(results["summary"], results["global_step"])
+        if should(SUMMARY_FREQ):
+            print("recording summary")
+            sv.summary_writer.add_summary(results["summary"], results["global_step"])
 
-            if should(DISPLAY_FREQ):
-                print("saving display images")
-                filesets = save_images(results["display"], step=results["global_step"])
-                append_index(filesets, step=True)
+        if should(DISPLAY_FREQ):
+            print("saving display images")
+            filesets = save_images(results["display"], step=results["global_step"])
+            append_index(filesets, step=True)
 
-            if should(TRACE_FREQ):
-                print("recording trace")
-                sv.summary_writer.add_run_metadata(run_metadata, "step_%d" % results["global_step"])
+        if should(TRACE_FREQ):
+            print("recording trace")
+            sv.summary_writer.add_run_metadata(run_metadata, "step_%d" % results["global_step"])
 
-            if should(PROCESS_FREQ):
-                # global_step will have the correct step count if we resume from a checkpoint
-                train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
-                train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
-                rate = (step + 1) * BATCH_SIZE / (time.time() - start)
-                remaining = (max_step - step) * BATCH_SIZE / rate
-                print(
-                    "progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
-                print("loss", results["loss"])
+        if should(PROCESS_FREQ):
+            # global_step will have the correct step count if we resume from a checkpoint
+            train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
+            train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
+            rate = (step + 1) * BATCH_SIZE / (time.time() - start)
+            remaining = (MAX_STEPS - step) * BATCH_SIZE / rate
+            print(
+                "progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
+            print("loss", results["loss"])
 
-                if should(SAVE_FREQ):
-                    print("saving model")
-                    saver.save(sess, os.path.join(OUTDIR, "model"), global_step=sv.global_step)
+            if should(SAVE_FREQ):
+                print("saving model")
+                saver.save(sess, os.path.join(OUTDIR, "model"), global_step=sv.global_step)
 
-                if sv.should_stop():
-                    break
-    elif MODE == 'test':
-        max_step = min(examples.steps_per_epoch, max_step)
-
-
-        for step in range(max_step):
-            results = sess.run(display_fetch)
-            filesets = save_images(results)
-            for i, f in enumerate(filesets):
-                print("evaluated image", f["name"])
-            index_path = append_index(filesets)
-
-            print("wrote index at", index_path)
+            if sv.should_stop():
+                break
 
