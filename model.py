@@ -205,7 +205,7 @@ def create_model(inputs, targets):
 
     # loss
     lambda_tv = 0.003 / (256 * 256)
-    loss = tf.reduce_mean(tf.square(targets - outputs)) + lambda_tv * fractional_variation(outputs, 1.65, 2.75, 1.25)
+    loss = tf.reduce_mean(tf.square(targets - outputs)) + lambda_tv * frac_total_variation(outputs, 1.65, 2.75, 1.25)
     # loss = tf.reduce_mean(tf.square(targets - outputs)) + lambda_tv * frac_total_variation(outputs)
     # loss = tf.reduce_mean(tf.square(targets - outputs))
 
@@ -421,136 +421,58 @@ def append_index(filesets, step=False):
 #     print(-res)
 #     return -res
 
-# def frac_total_variation(images, v1=1.65, name=None):
-#
-#   with tf.name_scope(name, 'total_variation'):
-#     ndims = images.get_shape().ndims
-#
-#     if ndims == 4:
-#       # generate the fractional array
-#       list = [(-v)*(-v+1)/2, -v, 2, -v, (-v)*(-v+1)/2]
-#
-#       # generate the fractional filter
-#       filter_x = tf.constant(list, shape=(1, 1, 5, 1))
-#       filter_y = tf.constant(list, shape=(1, 5, 1, 1))
-#
-#       # expand the tensor
-#       mat_ex = tf.pad(images, [[0, 0], [2, 2], [0, 0], [0, 0]], "REFLECT")
-#       mat_ey = tf.pad(images, [[0, 0], [0, 0], [2, 2], [0, 0]], "REFLECT")
-#
-#       def w_item(w_v, n):
-#
-#           if n == 0:
-#               return 1
-#
-#           w_pro = 1 / math.factorial(n + 1)
-#           for w_i in range(0, n + 1):
-#               w_pro *= w_v + w_i
-#           return w_pro
-#
-#       def map_dx(ele, n):
-#           return ele * w_item(v1, n)
-#
-#
-#
-#       dx_mat = tf.map_fn(dx_fn,(ma))
-#       dy_mat = tf.Variable(tf.random_normal([1, 256, 256, 1]))
-#       # conv
-#       img_shape = images.get_shape()
-#       for x in range(0, img_shape[1] - 1):
-#           for y in range(0, img_shape[2] + 1):
-#               tf.assign(dx_mat[0, x, y, 0], tf.reduce_sum())
-#
-#       # generate the dx_matrix
-#       dx_mat = tf.mat(mat_ex , filter_x)
-#       dy_mat = mat_ey * filter_y
-#
-#       pixel_dif1 = dx_mat[:, 1:, :, :] - dx_mat[:, :-1, :, :]
-#       pixel_dif2 = dy_mat[:, :, 1:, :] - dy_mat[:, :, :-1, :]
-#
-#       # Only sum for the last 3 axis.
-#       # This results in a 1-D tensor with the total variation for each image.
-#       sum_axis = [1, 2, 3]
-#     else:
-#       raise ValueError('\'images\' must be either 3 or 4-dimensional.')
-#
-#     # Calculate the total variation by taking the absolute value of the
-#     # pixel-differences and summing over the appropriate axis.
-#     tot_var = (math_ops.reduce_sum(math_ops.abs(pixel_dif1), axis=sum_axis) +
-#                math_ops.reduce_sum(math_ops.abs(pixel_dif2), axis=sum_axis))
-#
-#   return tot_var
+def frac_total_variation(images, v1=1.65, v2=2.75, v3=1.25, name=None):
 
-# load image data_train
-def fractional_variation(image, v1, v2, v3):
+  g = math.gamma
 
-    g = math.gamma
-    # preprocessed
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-    image = image.eval(session=sess)
-    sess.close()
+  with tf.name_scope(name, 'total_variation'):
+    ndims = images.get_shape().ndims
 
-    width = height = image.shape[1]
+    if ndims == 4:
+      # generate the fractional array
+      list = [(-v1)*(-v1+1)/2, -v1, 2, -v1, (-v1)*(-v1+1)/2]
 
-    # image_x = np.insert(image, 0, values=image[0,:], axis=0)
-    # image_x = np.insert(image, width, values=image[width, :], axis=0)
-    # image_y = np.insert(image, 0, values=image[:,0], axis=1)
-    # image_y = np.insert(image, width, values=image[:,width], axis=1)
+      # generate the fractional filter
+      filter_x = tf.constant(list, shape=(5, 1, 1, 1), dtype=tf.float32)
+      filter_y = tf.constant(list, shape=(1, 5, 1, 1), dtype=tf.float32)
 
+      # expand the tensor
+      # mat_ex = tf.pad(images, [[0, 0], [2, 2], [0, 0], [0, 0]], "REFLECT")
+      # mat_ey = tf.pad(images, [[0, 0], [0, 0], [2, 2], [0, 0]], "REFLECT")
 
-    # # 求差分过程中每一点的系数
-    # def w_item(w_v, n):
-    #
-    #     if n == 0:
-    #         return 1
-    #
-    #     w_pro = 1 / math.factorial(n + 1)
-    #     for w_i in range(0, n + 1):
-    #         w_pro *= w_v + w_i
-    #     return w_pro
-    #
-    # # x方向每个点对这个点的分数阶差分
-    # def fx(x,y,image,v):
-    #     x_sum = 0
-    #
-    #     for dx in range(1, 17):
-    #         m = abs(dx - x)
-    #         x_sum += w_item(v, m) * image[dx, y]
-    #
-    #     return x_sum
-    #
-    #     # y方向上每一点对于该点的差分
-    # def fy(x,y,image,v):
-    #     y_sum = 0
-    #
-    #     for dy in range(1, 17):
-    #         m = abs(dy - y)
-    #         y_sum += w_item(v, m) * image[x, dy]
-    #
-    #     return y_sum
-    #
-    # # 存放差分数据
-    # new_matric_x = np.ones((1, width, height, 1))
-    # new_matric_y = np.ones((1, width, height, 1))
-    # for x in range(1, image.shape[0] - 1):
-    #     for y in range(1, image.shape[1] - 1):
-    #         new_matric_x[0, x-1, y-1, 0] = fx(x, y, image, v1)
-    #         new_matric_y[0, x-1, y-1, 0] = fy(x, y, image, v1)
+      # def w_item(w_v, n):
+      #
+      #     if n == 0:
+      #         return 1
+      #
+      #     w_pro = 1 / math.factorial(n + 1)
+      #     for w_i in range(0, n + 1):
+      #         w_pro *= w_v + w_i
+      #     return w_pro
+      #
+      # def map_dx(ele, n):
+      #     return ele * w_item(v1, n)
 
-    # 对已差分矩阵进行一阶差分
-    list = [(-v1) * (-v1 + 1) / 2, -v1, 2, -v1, (-v1) * (-v1 + 1) / 2]
-    dx_filter = np.asarray(list).reshape((1,5,1,1))
-    dy_filter = np.asarray(list).reshape((1,1,5,1))
+      # generate the dx_matrix
+      dx_mat = tf.nn.conv2d(images, filter_x, [1, 1, 1, 1], 'SAME', True)
+      dy_mat = tf.nn.conv2d(images, filter_y, [1, 1, 1, 1], 'SAME', True)
 
-    new_matric_x = signal.fftconvolve(image, dx_filter, mode='same')
-    new_matric_y = signal.fftconvolve(image, dy_filter, mode='same')
+      pixel_dif1 = dx_mat[:, 1:, :, :] - dx_mat[:, :-1, :, :]
+      pixel_dif2 = dy_mat[:, :, 1:, :] - dy_mat[:, :, :-1, :]
 
-    Ixx = (np.column_stack((new_matric_x[0, :, 1:, 0], new_matric_x[0, :, width-1, 0])) - np.column_stack((new_matric_x[0, :, 0, 0],new_matric_x[0, :, :width-1, 0])))/ 2
-    Iyy = (np.row_stack((new_matric_y[0, 1:, :, 0], new_matric_y[0, height-1, :, 0])) - np.row_stack((new_matric_y[0, 0, :, 0],new_matric_y[0, :height-1, :, 0]))) / 2
+      # Only sum for the last 3 axis.
+      # This results in a 1-D tensor with the total variation for each image.
+      sum_axis = [1, 2, 3]
+    else:
+      raise ValueError('\'images\' must be either 3 or 4-dimensional.')
+
+    # Calculate the total variation by taking the absolute value of the
+    # pixel-differences and summing over the appropriate axis.
+    tot_res = (math_ops.reduce_sum(math_ops.abs(pixel_dif1), axis=sum_axis) +
+               math_ops.reduce_sum(math_ops.abs(pixel_dif2), axis=sum_axis))
 
     # 2norm 对x方向和y方向的进行平方再开方
-    new_matric_2norm = np.sqrt(np.power(new_matric_x, 2) + np.power(new_matric_y, 2))
+    new_matric_2norm = tf.sqrt(tf.pow(dx_mat, 2) + tf.pow(dy_mat, 2))
 
     # 堆叠方程
     res = 0
@@ -558,14 +480,101 @@ def fractional_variation(image, v1, v2, v3):
     for k in [0,1]:
         pro = 1
         for t in range(0, 2 * k + 1):
-            left_part = (g(2*k - v3) * np.power(new_matric_2norm, (v2 - 2*k))) / (g(-v3) * g(2*k - v3 + 1))
-            right_part = ((v2 - 2*k) * g(1 + v1) * g(2*k - v3 + 1)) / (2*k + 1) * g(v1) * g(-v3) * g(2*k - v3 + 2) * np.power(new_matric_2norm, v2-2*k-2) * (Ixx + Iyy)
+            left_part = (g(2*k - v3) * tf.pow(new_matric_2norm, (v2 - 2*k))) / (g(-v3) * g(2*k - v3 + 1))
+            right_part = ((v2 - 2*k) * g(1 + v1) * g(2*k - v3 + 1)) / (2*k + 1) * g(v1) * g(-v3) * g(2*k - v3 + 2) * np.power(new_matric_2norm, v2-2*k-2) * tot_res
 
-            pro *= (v2 - t + 1) / math.factorial(2*k) * np.sum(left_part + right_part)
+            pro *= (v2 - t + 1) / math.factorial(2*k) * (left_part + right_part)
 
         res += pro
 
-    return tf.convert_to_tensor(res)
+
+  return res
+
+# load image data_train
+# def fractional_variation(image, v1, v2, v3):
+#
+#     g = math.gamma
+#     # preprocessed
+#     sess = tf.Session()
+#     sess.run(tf.global_variables_initializer())
+#     image = image.eval(session=sess)
+#     sess.close()
+#
+#     width = height = image.shape[1]
+#
+#     # image_x = np.insert(image, 0, values=image[0,:], axis=0)
+#     # image_x = np.insert(image, width, values=image[width, :], axis=0)
+#     # image_y = np.insert(image, 0, values=image[:,0], axis=1)
+#     # image_y = np.insert(image, width, values=image[:,width], axis=1)
+#
+#
+#     # # 求差分过程中每一点的系数
+#     # def w_item(w_v, n):
+#     #
+#     #     if n == 0:
+#     #         return 1
+#     #
+#     #     w_pro = 1 / math.factorial(n + 1)
+#     #     for w_i in range(0, n + 1):
+#     #         w_pro *= w_v + w_i
+#     #     return w_pro
+#     #
+#     # # x方向每个点对这个点的分数阶差分
+#     # def fx(x,y,image,v):
+#     #     x_sum = 0
+#     #
+#     #     for dx in range(1, 17):
+#     #         m = abs(dx - x)
+#     #         x_sum += w_item(v, m) * image[dx, y]
+#     #
+#     #     return x_sum
+#     #
+#     #     # y方向上每一点对于该点的差分
+#     # def fy(x,y,image,v):
+#     #     y_sum = 0
+#     #
+#     #     for dy in range(1, 17):
+#     #         m = abs(dy - y)
+#     #         y_sum += w_item(v, m) * image[x, dy]
+#     #
+#     #     return y_sum
+#     #
+#     # # 存放差分数据
+#     # new_matric_x = np.ones((1, width, height, 1))
+#     # new_matric_y = np.ones((1, width, height, 1))
+#     # for x in range(1, image.shape[0] - 1):
+#     #     for y in range(1, image.shape[1] - 1):
+#     #         new_matric_x[0, x-1, y-1, 0] = fx(x, y, image, v1)
+#     #         new_matric_y[0, x-1, y-1, 0] = fy(x, y, image, v1)
+#
+#     # 对已差分矩阵进行一阶差分
+#     list = [(-v1) * (-v1 + 1) / 2, -v1, 2, -v1, (-v1) * (-v1 + 1) / 2]
+#     dx_filter = np.asarray(list).reshape((1,5,1,1))
+#     dy_filter = np.asarray(list).reshape((1,1,5,1))
+#
+#     new_matric_x = tf.nn.conv2d(image, filter=dx_filter, mode='same')
+#     new_matric_y = tf.nn.conv2d(image, filter=dy_filter, mode='same')
+#
+#     Ixx = (np.column_stack((new_matric_x[0, :, 1:, 0], new_matric_x[0, :, width-1, 0])) - np.column_stack((new_matric_x[0, :, 0, 0],new_matric_x[0, :, :width-1, 0])))/ 2
+#     Iyy = (np.row_stack((new_matric_y[0, 1:, :, 0], new_matric_y[0, height-1, :, 0])) - np.row_stack((new_matric_y[0, 0, :, 0],new_matric_y[0, :height-1, :, 0]))) / 2
+#
+#     # 2norm 对x方向和y方向的进行平方再开方
+#     new_matric_2norm = np.sqrt(np.power(new_matric_x, 2) + np.power(new_matric_y, 2))
+#
+#     # 堆叠方程
+#     res = 0
+#
+#     for k in [0,1]:
+#         pro = 1
+#         for t in range(0, 2 * k + 1):
+#             left_part = (g(2*k - v3) * np.power(new_matric_2norm, (v2 - 2*k))) / (g(-v3) * g(2*k - v3 + 1))
+#             right_part = ((v2 - 2*k) * g(1 + v1) * g(2*k - v3 + 1)) / (2*k + 1) * g(v1) * g(-v3) * g(2*k - v3 + 2) * np.power(new_matric_2norm, v2-2*k-2) * (Ixx + Iyy)
+#
+#             pro *= (v2 - t + 1) / math.factorial(2*k) * np.sum(left_part + right_part)
+#
+#         res += pro
+#
+#     return tf.convert_to_tensor(res)
 examples = load_examples()
 
 # model return grads_and_vars, loss, train, outputs, step_update
